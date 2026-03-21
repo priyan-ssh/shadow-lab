@@ -1,0 +1,9 @@
+tesseract-ocr
+tesseract-ocr-eng
+ghostscript
+unpaper
+pngquant
+qpdf
+icc-profiles-free
+libxml2
+zlib1g

@@ -1,0 +1,33 @@
+# ── SECRETS ──────────────────────────────────────────────
+.env
+
+# ── PIPELINE FOLDERS ─────────────────────────────────────
+# clean_library is output — no need to track sanitised files
+clean_library/
+test.pdf
+
+# dirty_zone is a Docker named volume, no host folder exists
+# but add just in case it gets created accidentally
+dirty_zone/
+browser_profile/
+# ── PYTHON ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── DOCKER ───────────────────────────────────────────────
+# Don't commit override files with local port/path tweaks
+docker-compose.override.yml
+
+# ── OS NOISE ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── EDITOR ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo

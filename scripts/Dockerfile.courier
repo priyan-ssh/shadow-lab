@@ -1,0 +1,16 @@
+FROM python:3.9-slim
+
+# Fix SSL — slim image ships with missing CA certificates
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    openssl \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install requests && \
+    rm -rf /root/.cache/pip
+
+WORKDIR /app
+COPY courier.py .
+
+CMD ["python", "-u", "courier.py"]

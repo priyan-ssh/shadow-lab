@@ -1,0 +1,77 @@
+# FIX: 'ersion' typo corrected to 'version'
+version: '3.8'
+
+services:
+
+  # ── THE BROWSER ──────────────────────────────────────────────────────────────
+  # X11-forwarded Firefox. Renders natively on your host display (no streaming).
+  # Downloads land directly in the dirty_zone Docker volume.
+  # uBlock Origin is force-installed via policies.json at build time.
+  safe_browser:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.browser
+    container_name: safe_browser
+    environment:
+      - DISPLAY=${DISPLAY}                  # Passed in from WSLg / VcXsrv
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix       # X11 socket — host renders the window
+      - /mnt/wslg:/mnt/wslg                 # WSLg specific (Windows 11 only)
+      - dirty_zone:/downloads               # All downloads land here, nowhere else
+    networks:
+      - egress_only                         # Internet yes — cannot reach bouncer
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    shm_size: "1gb"                         # Firefox needs shared memory for rendering
+
+  # ── THE BOUNCER ──────────────────────────────────────────────────────────────
+  # Offline vault. Triages files, soft-cleans innocent PDFs, strips EPUB scripts.
+  # Escalates hostile PDFs to the courier via the airlock volume.
+  # ZERO internet — network_mode: none is absolute.
+  local_bouncer:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.bouncer
+    container_name: local_bouncer
+    network_mode: none                      # Hard network isolation
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - dirty_zone:/input                   # Reads raw downloads from browser
+      - ./clean_library:/output             # Deposits clean files to host
+      - airlock:/airlock                    # Pneumatic tube to/from courier
+    restart: unless-stopped
+
+  # ── THE COURIER ──────────────────────────────────────────────────────────────
+  # Online delivery driver. Picks up hostile PDFs from the airlock,
+  # sends them to the HF Incinerator, returns clean PDF/A.
+  # Can see ONLY the airlock — not dirty_zone, not clean_library.
+  hf_courier:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.courier
+    container_name: hf_courier
+    env_file: .env                          # Provides HF_TOKEN and HF_SPACE_NAME
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - airlock:/airlock                    # Only the tube — no other filesystem access
+    restart: unless-stopped
+
+# ── VOLUMES ──────────────────────────────────────────────────────────────────
+volumes:
+  dirty_zone:       # Docker-managed — invisible to Windows, WSL, and Defender
+  airlock:          # Docker-managed — courier/bouncer handoff only
+
+# ── NETWORKS ─────────────────────────────────────────────────────────────────
+networks:
+  egress_only:
+    driver: bridge
+    internal: false   # Browser has internet
+    # bouncer and courier are NOT on this network

@@ -1,0 +1,15 @@
+FROM python:3.9-slim
+
+# Install pikepdf and download pdfid metal detector
+RUN pip install pikepdf && \
+    apt-get update && apt-get install -y wget && \
+    wget https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/pdfid.py \
+         -O /usr/local/bin/pdfid.py && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# FIX: COPY was missing — script was never in the image
+COPY bouncer.py .
+
+CMD ["python", "-u", "bouncer.py"]

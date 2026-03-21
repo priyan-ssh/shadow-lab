@@ -1,0 +1,15 @@
+# Get a shell inside the bouncer container
+docker exec -it local_bouncer sh
+
+# Then navigate and delete
+ls /airlock/outbound/          # see what's stuck
+rm /airlock/outbound/file.pdf.retry
+
+# Or one-liner without entering the container
+docker exec local_bouncer rm /airlock/outbound/file.pdf.retry
+
+# To nuke everything stuck in outbound
+docker exec local_bouncer sh -c "rm -f /airlock/outbound/*.retry"
+
+# to rebuild and restart container
+docker compose build --no-cache hf_courier && docker compose up -d --force-recreate hf_courier

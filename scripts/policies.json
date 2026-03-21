@@ -1,0 +1,41 @@
+{
+  "policies": {
+
+    "Extensions": {
+      "Install": [
+        "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      ],
+      "Locked": [
+        "uBlock0@raymondhill.net"
+      ]
+    },
+
+    "DisableBuiltinPDFViewer": true,
+
+    "DefaultDownloadDirectory": "/downloads",
+
+    "PromptForDownloadLocation": false,
+
+    "DisableTelemetry": true,
+
+    "DisableFirefoxStudies": true,
+
+    "DisablePocket": true,
+
+    "DisableFormHistory": true,
+
+    "Cookies": {
+      "Behavior": "reject-tracker-and-partition-foreign"
+    },
+
+    "PopupBlocking": {
+      "Default": false
+    },
+
+    "NoDefaultBookmarks": true,
+
+    "OverrideFirstRunPage": "",
+
+    "OverridePostUpdatePage": ""
+  }
+}

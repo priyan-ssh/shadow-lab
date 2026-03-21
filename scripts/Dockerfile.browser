@@ -1,0 +1,44 @@
+FROM debian:bookworm-slim
+
+# Install Firefox and the minimum X11 libs it needs to talk to the host display
+RUN apt-get update && apt-get install -y \
+    firefox-esr \
+    libgtk-3-0 \
+    libdbus-glib-1-2 \
+    libx11-xcb1 \
+    libxt6 \
+    libxrender1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    fonts-liberation \
+    ca-certificates \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user — never run a browser as root
+RUN useradd -m -s /bin/bash browser_user
+
+# Create the download landing zone.
+# This is where the dirty_zone Docker volume will be mounted.
+# chmod 1733: browser_user can write, cannot read back (sticky bit).
+# Only the bouncer container (running as bouncer_user) reads from here.
+RUN mkdir -p /downloads && chmod 1733 /downloads
+
+# Firefox profile directory
+RUN mkdir -p /home/browser_user/.mozilla/firefox/default
+
+# Bake in user preferences (download dir, PDF behaviour, etc.)
+COPY firefox-prefs.js /home/browser_user/.mozilla/firefox/default/user.js
+
+# Enterprise policy file — installs uBlock Origin and enforces settings
+# at the browser level, not just the profile level
+RUN mkdir -p /etc/firefox/policies
+COPY policies.json /etc/firefox/policies/policies.json
+
+RUN chown -R browser_user:browser_user /home/browser_user/.mozilla
+
+USER browser_user
+WORKDIR /home/browser_user
+
+CMD ["firefox-esr", "--profile", "/home/browser_user/.mozilla/firefox/default", "--no-remote"]
