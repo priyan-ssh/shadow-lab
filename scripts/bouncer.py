@@ -45,10 +45,11 @@ def wait_until_written(path, interval=0.5, stable_count=3, max_attempts=1200):
         try:
             size = os.path.getsize(path)
         except FileNotFoundError:
-            return
+            return False
         count = count + 1 if size == prev else 0
         prev = size
         time.sleep(interval)
+    return count >= stable_count
 
 
 # ─── PDF TRIAGE ───────────────────────────────────────────────────────────────
@@ -288,7 +289,9 @@ def watch_folder():
                 continue
 
             log.info(f"📂 [{filename}] New file detected in dirty_zone")
-            wait_until_written(filepath)
+            if not wait_until_written(filepath):
+                log.warning(f"⚠️  [{filename}] Write timeout or file disappeared — skipping processing for now")
+                continue
             log.info(f"   [{filename}] Write complete — starting triage")
 
             if filename.endswith(".pdf"):
