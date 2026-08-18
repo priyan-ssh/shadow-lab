@@ -4,6 +4,7 @@ import uuid
 import json
 import logging
 import requests
+import re
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,12 +19,15 @@ AIRLOCK_IN  = "/airlock/inbound"
 HF_TOKEN   = os.environ.get("HF_TOKEN")
 SPACE_NAME = os.environ.get("HF_SPACE_NAME")
 
-if not HF_TOKEN or not SPACE_NAME:
+if not HF_TOKEN or not SPACE_NAME or SPACE_NAME == "your_username/your_space_name":
     raise RuntimeError(
         "HF_TOKEN and HF_SPACE_NAME must be set in your .env file.\n"
         "  HF_TOKEN=hf_yourtoken\n"
         "  HF_SPACE_NAME=your_username/your_space_name"
     )
+
+if not re.fullmatch(r"[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+", SPACE_NAME):
+    raise RuntimeError("HF_SPACE_NAME must be 'owner/space_name' — no slashes, protocols, or dots.")
 
 # "redwolff/shadow_lab" → "https://redwolff-shadow-lab.hf.space"
 owner, spacename = SPACE_NAME.split("/")
@@ -100,9 +104,9 @@ def poll_sse(session_hash, filename, start_time):
                         output = payload.get("output", {})
                         if output.get("error"):
                             raise RuntimeError(f"HF Space error: {output['error']}")
-                        if not payload.get("success", True):
+                        if "success" not in payload or payload.get("success") is not True:
                             raise RuntimeError(
-                                f"HF returned success=false. "
+                                f"HF did not explicitly report success=true. "
                                 f"Payload: {json.dumps(payload)[:500]}"
                             )
                         data = output.get("data", [])
@@ -197,6 +201,12 @@ def send_to_hf(filepath, filename):
     dl = requests.get(result_url, headers=HEADERS, timeout=120)
     dl.raise_for_status()
 
+    content_type = dl.headers.get("content-type", "")
+    if "pdf" not in content_type.lower():
+        raise RuntimeError(f"Unexpected content-type from server: {content_type!r} — refusing to write")
+    if not dl.content.startswith(b"%PDF-"):
+        raise RuntimeError("Response does not start with PDF magic bytes — refusing to write")
+
     return dl.content
 
 
@@ -210,6 +220,18 @@ def watch_airlock():
     log.info(f"   Max reconnects:{MAX_RECONNECTS}")
 
     while True:
+        # Self-healing for stuck .retry files
+        import glob
+        STALE_SECONDS = 600
+        if os.path.exists(AIRLOCK_OUT):
+            for f in glob.glob(os.path.join(AIRLOCK_OUT, "*.retry")):
+                try:
+                    if time.time() - os.path.getmtime(f) > STALE_SECONDS:
+                        log.warning(f"⚠️ Purging stale retry file: {f}")
+                        os.remove(f)
+                except Exception as e:
+                    log.error(f"Failed to check/remove stale retry file {f}: {e}")
+
         if os.path.exists(AIRLOCK_OUT):
             for filename in os.listdir(AIRLOCK_OUT):
 

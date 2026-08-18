@@ -56,6 +56,9 @@ services:
       dockerfile: Dockerfile.courier
     container_name: hf_courier
     env_file: .env                          # Provides HF_TOKEN and HF_SPACE_NAME
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     security_opt:
       - no-new-privileges:true
     cap_drop:

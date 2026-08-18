@@ -16,6 +16,7 @@ import json
 import requests
 import tkinter as tk
 from tkinter import filedialog
+import re
 
 # ── Load token from env (same as courier) ────────────────────────────────────
 from pathlib import Path
@@ -24,20 +25,36 @@ def load_env():
     """Load .env file from current directory if it exists."""
     env_path = Path(".env")
     if env_path.exists():
+        seen_keys = set()
         for line in env_path.read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
-                os.environ.setdefault(key.strip(), val.strip())
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key in seen_keys:
+                    print(f"❌ Duplicate key found in .env: {key}")
+                    sys.exit(1)
+                seen_keys.add(key)
+                if key not in os.environ:
+                    os.environ[key] = val
 
 load_env()
 
 HF_TOKEN   = os.environ.get("HF_TOKEN")
-SPACE_NAME = os.environ.get("HF_SPACE_NAME", "redwolff/shadow_lab")
+SPACE_NAME = os.environ.get("HF_SPACE_NAME")
 
 if not HF_TOKEN:
     print("❌ HF_TOKEN not set. Add it to .env or run:")
     print("   HF_TOKEN=hf_yourtoken python test_hf.py")
+    sys.exit(1)
+
+if not SPACE_NAME or SPACE_NAME == "your_username/your_space_name":
+    print("❌ HF_SPACE_NAME not set. Add your own Space to .env — refusing to use a default.")
+    sys.exit(1)
+
+if not re.fullmatch(r"[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+", SPACE_NAME):
+    print("❌ HF_SPACE_NAME must be 'owner/space_name' — no slashes, protocols, or dots.")
     sys.exit(1)
 
 # ── Build Space URL ───────────────────────────────────────────────────────────
@@ -139,8 +156,8 @@ def send_to_hf(input_pdf):
 
             if msg == "process_completed":
                 log(f"      Full SSE payload: {json.dumps(payload, indent=2)}")
-                if not payload.get("success", True):
-                    print(f"\n❌ HF returned success=false — see payload above for real error")
+                if "success" not in payload or payload.get("success") is not True:
+                    print(f"\n❌ HF did not explicitly report success=true — aborting")
                     sys.exit(1)
                 data = payload.get("output", {}).get("data", [])
                 if data:
@@ -167,8 +184,18 @@ def send_to_hf(input_pdf):
     r = requests.get(result_url, headers=HEADERS, timeout=120)
     r.raise_for_status()
 
-    with open(output_pdf, "wb") as f:
+    content_type = r.headers.get("content-type", "")
+    if "pdf" not in content_type.lower():
+        print(f"❌ Unexpected content-type from server: {content_type!r} — refusing to write")
+        sys.exit(1)
+    if not r.content.startswith(b"%PDF-"):
+        print("❌ Response does not start with PDF magic bytes — refusing to write")
+        sys.exit(1)
+
+    tmp_path = output_pdf + ".part"
+    with open(tmp_path, "wb") as f:
         f.write(r.content)
+    os.replace(tmp_path, output_pdf)   # atomic write, no partial files on crash
 
     log(f"\n✅ Done! Saved to: {output_pdf} ({len(r.content) / 1024:.1f} KB)")
 
