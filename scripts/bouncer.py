@@ -37,9 +37,11 @@ def setup():
         log.info(f"   Directory ready: {d}")
 
 
-def wait_until_written(path, interval=0.5, stable_count=3):
+def wait_until_written(path, interval=0.5, stable_count=3, max_attempts=1200):
     prev, count = -1, 0
-    while count < stable_count:
+    attempts = 0
+    while count < stable_count and attempts < max_attempts:
+        attempts += 1
         try:
             size = os.path.getsize(path)
         except FileNotFoundError:

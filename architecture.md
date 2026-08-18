@@ -190,49 +190,87 @@ def wait_for_complete_write(path, interval=0.5, stable_count=3):
 | **Partially-written file processed early** | LOW | Size-stability polling replaces fixed sleep. File processed only when stable. |
 | **Container escape via exploit** | MED | Containers run as non-root. `cap_drop: ALL`, `no-new-privileges:true`. Bouncer has no network. |
 | **Compromised file reaches host directly** | LOW | Only `clean_library` is bind-mounted. `dirty_zone` originals are deleted post-processing. |
+| **Compromised/malicious HF Space response** | MED | Validate `Content-Type` and magic bytes (`%PDF-`) of the response prior to saving, and write atomically using a `.part` extension to prevent partial file writes. |
 
 ### 6.2 Remaining Limitations
 * Video playback inside the X11 browser container is CPU-only (no GPU passthrough). Not relevant for document downloading.
 * Sites requiring CAPTCHAs, logins, or complex JS navigation require manual interaction in the browser — the pipeline handles the file once downloaded.
-* The Hugging Face escalation path requires outbound internet from the bouncer for API calls. In fully air-gapped setups, a local `ocrmypdf` endpoint should be substituted.
+* The Hugging Face escalation path requires outbound internet from the **courier** for API calls. In fully air-gapped setups, a local `ocrmypdf` endpoint should be substituted.
 
 ---
 
 ## 7. Docker Compose Reference
 
 ```yaml
+version: '3.8'
+
 services:
+
+  # ── THE BROWSER ──────────────────────────────────────────────────────────────
   safe_browser:
-    build: ./browser
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.browser
+    container_name: safe_browser
     environment:
-      - DISPLAY=${DISPLAY}
+      - DISPLAY=${DISPLAY}                  # Passed in from WSLg / VcXsrv
     volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
-      - /mnt/wslg:/mnt/wslg           # WSLg only
-      - dirty_zone:/dirty_zone
-      - browser_profile:/home/browser_user/.mozilla
-    networks: [egress_only]
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
-    shm_size: '1gb'
+      - /tmp/.X11-unix:/tmp/.X11-unix       # X11 socket — host renders the window
+      - /mnt/wslg:/mnt/wslg                 # WSLg specific (Windows 11 only)
+      - dirty_zone:/downloads               # All downloads land here, nowhere else
+    networks:
+      - egress_only                         # Internet yes — cannot reach bouncer
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    shm_size: "1gb"                         # Firefox needs shared memory for rendering
 
-  bouncer:
-    build: ./bouncer
+  # ── THE BOUNCER ──────────────────────────────────────────────────────────────
+  local_bouncer:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.bouncer
+    container_name: local_bouncer
+    network_mode: none                      # Hard network isolation
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
-      - dirty_zone:/dirty_zone
-      - ./clean_library:/clean_library  # bind-mount safe here
-    network_mode: none
-    security_opt: [no-new-privileges:true]
-    cap_drop: [ALL]
+      - dirty_zone:/input                   # Reads raw downloads from browser
+      - ./clean_library:/output             # Deposits clean files to host
+      - airlock:/airlock                    # Pneumatic tube to/from courier
+    restart: unless-stopped
 
+  # ── THE COURIER ──────────────────────────────────────────────────────────────
+  hf_courier:
+    build:
+      context: ./scripts
+      dockerfile: Dockerfile.courier
+    container_name: hf_courier
+    env_file: .env                          # Provides HF_TOKEN and HF_SPACE_NAME
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - airlock:/airlock                    # Only the tube — no other filesystem access
+    restart: unless-stopped
+
+# ── VOLUMES ──────────────────────────────────────────────────────────────────
 volumes:
-  dirty_zone:    # Docker-managed, invisible to host OS
-  browser_profile:
+  dirty_zone:       # Docker-managed — invisible to Windows, WSL, and Defender
+  airlock:          # Docker-managed — courier/bouncer handoff only
 
+# ── NETWORKS ─────────────────────────────────────────────────────────────────
 networks:
   egress_only:
     driver: bridge
-    internal: false
+    internal: false   # Browser has internet
 ```
 
 ---
