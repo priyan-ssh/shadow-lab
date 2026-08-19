@@ -160,10 +160,17 @@ def send_to_hf(input_pdf):
                     print(f"\n❌ HF did not explicitly report success=true — aborting")
                     sys.exit(1)
                 data = payload.get("output", {}).get("data", [])
-                if data:
-                    item = data[0]
-                    result_path = item.get("path") or item.get("url") if isinstance(item, dict) else str(item)
-                log(f"      ✅ Result path: {result_path}")
+                clean_path = None
+                log_path = None
+                if len(data) >= 2:
+                    item0 = data[0]
+                    item1 = data[1]
+                    clean_path = item0.get("path") or item0.get("url") if isinstance(item0, dict) else str(item0)
+                    log_path = item1.get("path") or item1.get("url") if isinstance(item1, dict) else str(item1)
+                elif len(data) >= 1:
+                    item0 = data[0]
+                    clean_path = item0.get("path") or item0.get("url") if isinstance(item0, dict) else str(item0)
+                log(f"      ✅ Clean result path: {clean_path}, log path: {log_path}")
                 break
             elif msg == "estimation":
                 log(f"      ⏳ Queue position: {payload.get('rank', '?')}")
@@ -172,13 +179,13 @@ def send_to_hf(input_pdf):
             elif msg == "process_generating":
                 log(f"      ⚙️  Generating...")
 
-    if not result_path:
+    if not clean_path:
         print("❌ No result path received — check HF Space Logs tab")
         sys.exit(1)
 
     # STEP 4: Download
     log("[4/4] Downloading clean PDF/A...")
-    result_url = result_path if result_path.startswith("http") else f"{api_base}/file={result_path}"
+    result_url = clean_path if clean_path.startswith("http") else f"{api_base}/file={clean_path}"
     log(f"      URL: {result_url}")
 
     r = requests.get(result_url, headers=HEADERS, timeout=120)
@@ -197,7 +204,25 @@ def send_to_hf(input_pdf):
         f.write(r.content)
     os.replace(tmp_path, output_pdf)   # atomic write, no partial files on crash
 
-    log(f"\n✅ Done! Saved to: {output_pdf} ({len(r.content) / 1024:.1f} KB)")
+    log(f"\n✅ Done! Saved clean PDF to: {output_pdf} ({len(r.content) / 1024:.1f} KB)")
+
+    # Download event log if available
+    if log_path:
+        log_url = log_path if log_path.startswith("http") else f"{api_base}/file={log_path}"
+        log(f"      Downloading log from: {log_url}")
+        try:
+            r_log = requests.get(log_url, headers=HEADERS, timeout=60)
+            r_log.raise_for_status()
+            output_log = output_pdf.replace('_clean.pdf', '_log.txt')
+            if output_log == output_pdf: # fallback
+                output_log = os.path.splitext(output_pdf)[0] + "_log.txt"
+            tmp_log = output_log + ".part"
+            with open(tmp_log, "wb") as f:
+                f.write(r_log.content)
+            os.replace(tmp_log, output_log)
+            log(f"✅ Saved log file to: {output_log}")
+        except Exception as e:
+            log(f"⚠️  Failed to download log: {e}")
 
 
 if __name__ == "__main__":

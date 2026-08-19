@@ -110,15 +110,18 @@ def poll_sse(session_hash, filename, start_time):
                                 f"Payload: {json.dumps(payload)[:500]}"
                             )
                         data = output.get("data", [])
-                        result_path = None
-                        if data:
-                            item = data[0]
-                            if isinstance(item, dict):
-                                result_path = item.get("path") or item.get("url")
-                            else:
-                                result_path = str(item)
-                        log.info(f"   [{filename}] ✅ process_completed — result: {result_path}")
-                        return result_path
+                        clean_path = None
+                        log_path = None
+                        if len(data) >= 2:
+                            item0 = data[0]
+                            item1 = data[1]
+                            clean_path = item0.get("path") or item0.get("url") if isinstance(item0, dict) else str(item0)
+                            log_path = item1.get("path") or item1.get("url") if isinstance(item1, dict) else str(item1)
+                        elif len(data) >= 1:
+                            item0 = data[0]
+                            clean_path = item0.get("path") or item0.get("url") if isinstance(item0, dict) else str(item0)
+                        log.info(f"   [{filename}] ✅ process_completed — clean result: {clean_path}, log: {log_path}")
+                        return clean_path, log_path
 
                     elif msg == "process_starts":
                         log.info(f"   [{filename}] HF: process started")
@@ -190,14 +193,14 @@ def send_to_hf(filepath, filename):
 
     # --- STEP 3: Stream SSE with reconnection ---
     start_time  = time.time()
-    result_path = poll_sse(session_hash, filename, start_time)
+    clean_path, log_path = poll_sse(session_hash, filename, start_time)
 
-    if not result_path:
+    if not clean_path:
         raise RuntimeError("No result path received — check HF Space Logs tab")
 
     # --- STEP 4: Download ---
-    result_url = result_path if result_path.startswith("http") else f"{api_base}/file={result_path}"
-    log.info(f"   [{filename}] Downloading from: {result_url}")
+    result_url = clean_path if clean_path.startswith("http") else f"{api_base}/file={clean_path}"
+    log.info(f"   [{filename}] Downloading clean PDF from: {result_url}")
     dl = requests.get(result_url, headers=HEADERS, timeout=120)
     dl.raise_for_status()
 
@@ -207,7 +210,18 @@ def send_to_hf(filepath, filename):
     if not dl.content.startswith(b"%PDF-"):
         raise RuntimeError("Response does not start with PDF magic bytes — refusing to write")
 
-    return dl.content
+    log_content = None
+    if log_path:
+        log_url = log_path if log_path.startswith("http") else f"{api_base}/file={log_path}"
+        log.info(f"   [{filename}] Downloading log from: {log_url}")
+        try:
+            dl_log = requests.get(log_url, headers=HEADERS, timeout=60)
+            dl_log.raise_for_status()
+            log_content = dl_log.content
+        except Exception as e:
+            log.warning(f"⚠️  [{filename}] Failed to download log file: {e}")
+
+    return dl.content, log_content
 
 
 def watch_airlock():
@@ -243,7 +257,7 @@ def watch_airlock():
                 log.info(f"🌐 [{filename}] STAGE: Sending to Hugging Face — {SPACE_NAME}")
 
                 try:
-                    clean_bytes = send_to_hf(filepath, filename)
+                    clean_bytes, log_bytes = send_to_hf(filepath, filename)
 
                     tmp_inbound   = os.path.join(AIRLOCK_IN, filename + ".tmp")
                     final_inbound = os.path.join(AIRLOCK_IN, filename)
@@ -251,6 +265,14 @@ def watch_airlock():
                     with open(tmp_inbound, 'wb') as f:
                         f.write(clean_bytes)
                     os.rename(tmp_inbound, final_inbound)
+
+                    if log_bytes:
+                        log_filename = filename.replace('.pdf', '_log.txt')
+                        tmp_log_inbound   = os.path.join(AIRLOCK_IN, log_filename + ".tmp")
+                        final_log_inbound = os.path.join(AIRLOCK_IN, log_filename)
+                        with open(tmp_log_inbound, 'wb') as f:
+                            f.write(log_bytes)
+                        os.rename(tmp_log_inbound, final_log_inbound)
 
                     os.remove(filepath)
                     log.info(f"✅ [{filename}] Delivered to airlock/inbound — bouncer will retrieve")

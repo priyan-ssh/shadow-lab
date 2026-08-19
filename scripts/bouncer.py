@@ -42,11 +42,24 @@ def wait_until_written(path, interval=0.5, stable_count=3, max_attempts=1200):
     attempts = 0
     while count < stable_count and attempts < max_attempts:
         attempts += 1
+        
+        # If the browser is still writing to a temporary part file, the download is not done
+        if os.path.exists(path + ".part") or os.path.exists(path + ".tmp"):
+            count = 0
+            time.sleep(interval)
+            continue
+            
         try:
             size = os.path.getsize(path)
         except FileNotFoundError:
             return False
-        count = count + 1 if size == prev else 0
+            
+        # A completed PDF/EPUB must have a size greater than 0 bytes
+        if size == prev and size > 0:
+            count += 1
+        else:
+            count = 0
+            
         prev = size
         time.sleep(interval)
     return count >= stable_count
@@ -90,6 +103,7 @@ def soft_clean(filepath, filename):
                 del pdf.Root.Names.JavaScript
                 log.info(f"   [{filename}] Stripped: /JavaScript names")
             pdf.save(output_path)
+            os.chmod(output_path, 0o666)
 
         log.info(f"✅ [{filename}] Soft Clean SUCCESS — written to clean_library")
         os.remove(filepath)
@@ -124,7 +138,14 @@ def ocr_incinerate(filepath, filename):
     ]
 
     log.info(f"   [{filename}] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        log.warning(f"⚠️  [{filename}] 'ocrmypdf' command not found locally — escalating to HF courier")
+        return False
+    except Exception as e:
+        log.error(f"💀 [{filename}] Local OCR execution failed: {e} — escalating to HF courier")
+        return False
 
     stdout = result.stdout.decode(errors='replace')
     stderr = result.stderr.decode(errors='replace')
@@ -137,6 +158,7 @@ def ocr_incinerate(filepath, filename):
             os.remove(output_path)
         return False
 
+    os.chmod(output_path, 0o666)
     log.info(f"✅ [{filename}] Local OCR SUCCESS — clean PDF/A written to clean_library")
     os.remove(filepath)
     return True
@@ -245,6 +267,7 @@ def scrub_epub(filepath, filename):
 
         shutil.make_archive(output_path.replace('.epub', ''), 'zip', temp_dir)
         os.rename(output_path.replace('.epub', '.zip'), output_path)
+        os.chmod(output_path, 0o666)
         shutil.rmtree(temp_dir)
         os.remove(filepath)
         log.info(f"✅ [{filename}] EPUB Chemical Peel SUCCESS — written to clean_library")
@@ -273,10 +296,11 @@ def watch_folder():
 
         # 1. Collect returning cloud-cleaned files from courier
         for filename in os.listdir(AIRLOCK_IN):
-            if filename.endswith('.pdf'):
+            if filename.endswith(('.pdf', '.txt')):
                 src = os.path.join(AIRLOCK_IN, filename)
                 dst = os.path.join(OUTPUT_DIR, filename)
                 shutil.move(src, dst)
+                os.chmod(dst, 0o666)
                 log.info(f"📥 [{filename}] Retrieved from airlock — written to clean_library")
 
         # 2. Process new dirty files
@@ -321,8 +345,11 @@ def watch_folder():
                 scrub_epub(filepath, filename)
 
             else:
-                log.warning(f"🗑️  [{filename}] Unknown filetype — passing through to clean_library untouched")
-                shutil.move(filepath, os.path.join(OUTPUT_DIR, filename))
+                log.warning(f"🚨 [{filename}] Rejecting unknown filetype — file nuked for safety")
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    log.error(f"Failed to remove rejected file {filepath}: {e}")
 
         time.sleep(5)
 

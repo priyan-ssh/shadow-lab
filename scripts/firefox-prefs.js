@@ -23,14 +23,7 @@ user_pref("pdfjs.disabled", true);
 
 // --- DISABLE AUTO-OPEN FOR ALL KNOWN TYPES ---
 // Prevents Firefox from handing downloaded files to the OS to open
-user_pref("browser.helperApps.neverAsk.saveToDisk",
-    "application/pdf;" +
-    "application/epub+zip;" +
-    "application/octet-stream;" +
-    "application/x-download;" +
-    "application/force-download;" +
-    "binary/octet-stream"
-);
+user_pref("browser.helperApps.neverAsk.saveToDisk", "application/pdf;application/epub+zip;application/octet-stream;application/x-download;application/force-download;binary/octet-stream");
 
 // --- PRIVACY & TELEMETRY ---
 user_pref("datareporting.healthreport.uploadEnabled", false);

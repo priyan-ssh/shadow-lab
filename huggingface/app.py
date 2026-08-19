@@ -54,7 +54,7 @@ def should_skip(line):
     return any(k in line_lower for k in SKIP_KEYWORDS)
 
 
-def stream_ocrmypdf(cmd, filename):
+def stream_ocrmypdf(cmd, filename, job_logs):
     """
     Run ocrmypdf, stream stderr line by line, log clean progress.
     FIX: last_pct uses nonlocal so it actually tracks state across lines.
@@ -95,10 +95,14 @@ def stream_ocrmypdf(cmd, filename):
                 bar_filled = int(pct / 5)
                 bar_empty  = 20 - bar_filled
                 bar        = "█" * bar_filled + "░" * bar_empty
-                log.info(f"   [{filename}] [{bar}] {pct:>3}% — {label}")
+                msg = f"   [{filename}] [{bar}] {pct:>3}% — {label}"
+                log.info(msg)
+                job_logs.append(f"{time.strftime('%H:%M:%S')} {msg}")
             elif pct is None:
                 # Log remaining meaningful lines without a bar
-                log.info(f"   [{filename}] ℹ️  {line}")
+                msg = f"   [{filename}] ℹ️  {line}"
+                log.info(msg)
+                job_logs.append(f"{time.strftime('%H:%M:%S')} {msg}")
 
     stderr_thread = threading.Thread(target=read_stderr)
     stderr_thread.start()
@@ -112,6 +116,11 @@ def stream_ocrmypdf(cmd, filename):
 
 def nuke_it(pdf_file):
     start_time = time.time()
+    job_logs = []
+
+    def job_log(msg):
+        log.info(msg)
+        job_logs.append(f"{time.strftime('%H:%M:%S')} {msg}")
 
     if pdf_file is None:
         raise gr.Error("No file received")
@@ -123,12 +132,13 @@ def nuke_it(pdf_file):
     filename   = os.path.basename(filepath)
     input_size = os.path.getsize(filepath) / 1024
 
-    log.info("=" * 60)
-    log.info(f"🔥 JOB START: {filename}")
-    log.info(f"   Input size: {input_size:.1f} KB")
-    log.info("=" * 60)
+    job_log("=" * 60)
+    job_log(f"🔥 JOB START: {filename}")
+    job_log(f"   Input size: {input_size:.1f} KB")
+    job_log("=" * 60)
 
     output_path = f"/tmp/clean_{filename}"
+    log_file_path = f"/tmp/log_{filename}.txt"
 
     cmd = [
         "ocrmypdf",
@@ -143,14 +153,16 @@ def nuke_it(pdf_file):
         output_path
     ]
 
-    log.info("⚙️  Running ocrmypdf with live progress...")
-    log.info(f"   [░░░░░░░░░░░░░░░░░░░░]   0% — Starting...")
+    job_log("⚙️  Running ocrmypdf with live progress...")
+    job_log(f"   [░░░░░░░░░░░░░░░░░░░░]   0% — Starting...")
 
-    returncode, full_stderr = stream_ocrmypdf(cmd, filename)
+    returncode, full_stderr = stream_ocrmypdf(cmd, filename, job_logs)
 
     if returncode != 0:
-        log.error(f"💀 ocrmypdf FAILED — exit {returncode}")
-        log.error(f"   stderr: {full_stderr[-500:]}")
+        job_log(f"💀 ocrmypdf FAILED — exit {returncode}")
+        job_log(f"   stderr: {full_stderr[-500:]}")
+        with open(log_file_path, "w", encoding="utf-8") as lf:
+            lf.write("\n".join(job_logs))
         raise gr.Error(f"ocrmypdf failed (exit {returncode}): {full_stderr[-300:]}")
 
     if not os.path.exists(output_path):
@@ -159,16 +171,19 @@ def nuke_it(pdf_file):
     output_size = os.path.getsize(output_path) / 1024
     duration    = time.time() - start_time
 
-    log.info(f"   [████████████████████] 100% — Complete!")
-    log.info("=" * 60)
-    log.info(f"✅ JOB COMPLETE: {filename}")
-    log.info(f"   Input:    {input_size:.1f} KB")
-    log.info(f"   Output:   {output_size:.1f} KB")
-    log.info(f"   Ratio:    {output_size / input_size:.2f}x")
-    log.info(f"   Duration: {duration:.1f}s")
-    log.info("=" * 60)
+    job_log(f"   [████████████████████] 100% — Complete!")
+    job_log("=" * 60)
+    job_log(f"✅ JOB COMPLETE: {filename}")
+    job_log(f"   Input:    {input_size:.1f} KB")
+    job_log(f"   Output:   {output_size:.1f} KB")
+    job_log(f"   Ratio:    {output_size / input_size:.2f}x")
+    job_log(f"   Duration: {duration:.1f}s")
+    job_log("=" * 60)
 
-    return output_path
+    with open(log_file_path, "w", encoding="utf-8") as lf:
+        lf.write("\n".join(job_logs))
+
+    return output_path, log_file_path
 
 
 with gr.Blocks(title="Shadow Lab Incinerator") as demo:
@@ -177,13 +192,15 @@ with gr.Blocks(title="Shadow Lab Incinerator") as demo:
 
     with gr.Row():
         input_file  = gr.File(label="Hostile PDF",    file_types=[".pdf"])
-        output_file = gr.File(label="Sanitised PDF/A")
+        with gr.Column():
+            output_file = gr.File(label="Sanitised PDF/A")
+            log_file    = gr.File(label="Incinerator Event Log")
 
     btn = gr.Button("Incinerate", variant="primary")
     btn.click(
         fn=nuke_it,
         inputs=input_file,
-        outputs=output_file,
+        outputs=[output_file, log_file],
         api_name="nuke_it"
     )
 
