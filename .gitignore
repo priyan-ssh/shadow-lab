@@ -5,6 +5,7 @@
 # clean_library is output — no need to track sanitised files
 clean_library/
 test.pdf
+huggingface/
 
 # dirty_zone is a Docker named volume, no host folder exists
 # but add just in case it gets created accidentally
