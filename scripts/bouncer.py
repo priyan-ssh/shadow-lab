@@ -5,6 +5,7 @@ import re
 import zipfile
 import shutil
 import logging
+import hashlib
 import pikepdf
 
 logging.basicConfig(
@@ -65,12 +66,42 @@ def wait_until_written(path, interval=0.5, stable_count=3, max_attempts=1200):
     return count >= stable_count
 
 
+def log_virustotal_link(filepath, filename):
+    try:
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        file_hash = sha256_hash.hexdigest()
+        log.info(f"🛡️  [{filename}] VirusTotal: https://www.virustotal.com/gui/file/{file_hash}")
+    except Exception as e:
+        log.error(f"⚠️  [{filename}] Failed to compute hash: {e}")
+
+
+def verify_magic_bytes(filepath, filename):
+    try:
+        with open(filepath, 'rb') as f:
+            header = f.read(4)
+        if filename.endswith(".pdf"):
+            if not header.startswith(b"%PDF"):
+                log.warning(f"🚨 [{filename}] Fake PDF detected! Header {header} doesn't match '%PDF' — nuking.")
+                return False
+        elif filename.endswith(".epub"):
+            if not header.startswith(b"PK"): # EPUBs are ZIP files, which start with PK
+                log.warning(f"🚨 [{filename}] Fake EPUB detected! Header {header} doesn't match 'PK' — nuking.")
+                return False
+        return True
+    except Exception as e:
+        log.error(f"⚠️  [{filename}] Could not read magic bytes: {e} — nuking for safety.")
+        return False
+
+
 # ─── PDF TRIAGE ───────────────────────────────────────────────────────────────
 
 def is_guilty(filepath):
     filename = os.path.basename(filepath)
     log.info(f"🔍 [{filename}] Scanning for hostile tags...")
-    red_flags = ['/JS', '/JavaScript', '/AA', '/OpenAction', '/Launch']
+    red_flags = ['/JS', '/JavaScript', '/AA', '/OpenAction', '/Launch', '/EmbeddedFiles']
     try:
         result = subprocess.run(
             ["python", PDFID_PATH, "-n", filepath],
@@ -317,6 +348,17 @@ def watch_folder():
                 log.warning(f"⚠️  [{filename}] Write timeout or file disappeared — skipping processing for now")
                 continue
             log.info(f"   [{filename}] Write complete — starting triage")
+            
+            # Log VirusTotal hash for threat intelligence
+            log_virustotal_link(filepath, filename)
+
+            # Verify Magic Bytes to stop fake extensions (fail-fast)
+            if not verify_magic_bytes(filepath, filename):
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    log.error(f"Failed to remove fake file {filepath}: {e}")
+                continue
 
             if filename.endswith(".pdf"):
                 log.info(f"📄 [{filename}] STAGE: PDF Triage")
