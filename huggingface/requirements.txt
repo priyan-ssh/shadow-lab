@@ -1,2 +1,1 @@
 ocrmypdf
-gradio==3.50.2
